@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ژورنال فارکس</title>
+<link rel="icon" href="data:,">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body style="margin:0;">
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+/* ----------------------------- ابزارهای کمکی ----------------------------- */
+
+const STORAGE_KEY = "fx_journal_trades_v1";
+const BALANCE_KEY = "fx_journal_balance_v1";
+const GOAL_KEY = "fx_journal_goal_v1";
+
+const PAIRS = [
+  "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD",
+  "USD/CAD", "NZD/USD", "EUR/JPY", "GBP/JPY", "XAU/USD",
+];
+
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+function fmtMoney(n) {
+  const sign = n < 0 ? "-" : n > 0 ? "+" : "";
+  const abs = Math.abs(n);
+  return `${sign}$${abs.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+}
+
+function fmtDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString("fa-IR", { year: "numeric", month: "2-digit", day: "2-digit" });
+  } catch {
+    return iso;
+  }
+}
+
+function isStorageAvailable() {
+  try {
+    const testKey = "__fx_journal_test__";
+    localStorage.setItem(testKey, "1");
+    localStorage.removeItem(testKey);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/* ------------------------------ Storage hooks ------------------------------ */
+
+function useTrades() {
+  const [trades, setTrades] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setTrades(JSON.parse(raw));
+    } catch (e) {
+      // هنوز تریدی ذخیره نشده یا داده خراب است
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  const persist = useCallback((next) => {
+    setTrades(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setError(null);
+    } catch (e) {
+      setError("ذخیره‌سازی ناموفق بود (شاید حافظهٔ مرورگر پر است)");
+    }
+  }, []);
+
+  const addTrade = useCallback((trade) => {
+    const next = [{ ...trade, id: uid(), createdAt: new Date().toISOString() }, ...trades];
+    persist(next);
+  }, [trades, persist]);
+
+  const deleteTrade = useCallback((id) => {
+    const next = trades.filter((t) => t.id !== id);
+    persist(next);
+  }, [trades, persist]);
+
+  return { trades, loaded, error, addTrade, deleteTrade };
+}
+
+function useSettings() {
+  const [balance, setBalanceState] = useState(5000);
+  const [goalPct, setGoalPctState] = useState(7);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const b = localStorage.getItem(BALANCE_KEY);
+      if (b) setBalanceState(JSON.parse(b));
+    } catch (e) {}
+    try {
+      const g = localStorage.getItem(GOAL_KEY);
+      if (g) setGoalPctState(JSON.parse(g));
+    } catch (e) {}
+    setLoaded(true);
+  }, []);
+
+  const setBalance = useCallback((val) => {
+    setBalanceState(val);
+    try { localStorage.setItem(BALANCE_KEY, JSON.stringify(val)); } catch (e) {}
+  }, []);
+
+  const setGoalPct = useCallback((val) => {
+    setGoalPctState(val);
+    try { localStorage.setItem(GOAL_KEY, JSON.stringify(val)); } catch (e) {}
+  }, []);
+
+  return { balance, setBalance, goalPct, setGoalPct, loaded };
+}
+
+/* --------------------------------- آیکن‌ها --------------------------------- */
+
+const Icon = {
+  dashboard: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}>
+      <rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" />
+      <rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" />
+    </svg>
+  ),
+  plus: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}>
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
+  ),
+  list: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" strokeLinecap="round" />
+    </svg>
+  ),
+  brain: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}>
+      <path d="M9.5 4a2.5 2.5 0 0 0-2.5 2.5v.6A2.9 2.9 0 0 0 5 9.9v1.2a2.9 2.9 0 0 0-1 2.2A3 3 0 0 0 7 16.2V18a2.5 2.5 0 0 0 2.5 2.5M14.5 4A2.5 2.5 0 0 1 17 6.5v.6a2.9 2.9 0 0 1 2 2.8v1.2a2.9 2.9 0 0 1 1 2.2 3 3 0 0 1-3 2.9V18a2.5 2.5 0 0 1-2.5 2.5M9.5 4v16M14.5 4v16" />
+    </svg>
+  ),
+  trash: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}>
+      <path d="M4 7h16M9 7V4.6c0-.6.5-1.1 1.1-1.1h3.8c.6 0 1.1.5 1.1 1.1V7M6 7l1 13c.05.5.5 1 1 1h8c.5 0 .95-.5 1-1l1-13" strokeLinecap="round" />
+    </svg>
+  ),
+  up: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+      <path d="M17 7L7 17M17 7H9M17 7v8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  down: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}>
+      <path d="M7 7l10 10M7 7v8M7 7h8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  chart: (p) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" {...p}>
+      <path d="M3 17l5-5 4 3 6-7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 21h18" strokeLinecap="round" />
+    </svg>
+  ),
+};
+
+/* -------------------------------- نشانگرها -------------------------------- */
+
+function CandleSignature({ trades }) {
+  // یک ستون شمع که از روی ۱۲ تریدِ آخر ساخته می‌شود؛ امضای بصری صفحه
+  const last = trades.slice(0, 12).reverse();
+  const bars = last.length ? last : Array.from({ length: 12 }, () => null);
+  return (
+    <div className="candle-sig" aria-hidden="true">
+      {bars.map((t, i) => {
+        if (!t) return <div key={i} className="candle-sig__bar candle-sig__bar--empty" />;
+        const win = Number(t.pnl) >= 0;
+        const h = Math.min(100, 28 + Math.abs(Number(t.pnl)) * 1.2);
+        return (
+          <div
+            key={i}
+            className={`candle-sig__bar ${win ? "candle-sig__bar--win" : "candle-sig__bar--loss"}`}
+            style={{ height: `${h}%` }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function RingStat({ percent, label, sub }) {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const angle = clamped * 3.6;
+  return (
+    <div className="ring">
+      <div
+        className="ring__track"
+        style={{
+          background: `conic-gradient(#35e3b0 ${angle}deg, rgba(255,255,255,0.06) ${angle}deg)`,
+        }}
+      >
+        <div className="ring__dot" style={{ transform: `rotate(${angle}deg)` }}>
+          <span />
+        </div>
+        <div className="ring__center">
+          <div className="ring__value">{clamped.toFixed(0)}%</div>
+          <div className="ring__label">{label}</div>
+        </div>
+      </div>
+      {sub && <div className="ring__sub">{sub}</div>}
+    </div>
+  );
+}
+
+/* ------------------------------- نمودار خطی ------------------------------- */
+
+function EquityChart({ points, goalLine, startBalance }) {
+  const width = 600;
+  const height = 220;
+  const padding = { top: 18, right: 12, bottom: 28, left: 56 };
+
+  const values = points.map((p) => p.value);
+  const allValues = [...values, goalLine, startBalance];
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const span = max - min || 1;
+  const padded = { min: min - span * 0.08, max: max + span * 0.08 };
+  const fullSpan = padded.max - padded.min || 1;
+
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+
+  const xAt = (i) => padding.left + (points.length <= 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+  const yAt = (v) => padding.top + innerH - ((v - padded.min) / fullSpan) * innerH;
+
+  const linePath = points
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${yAt(p.value).toFixed(1)}`)
+    .join(" ");
+
+  const areaPath =
+    points.length > 0
+      ? `${linePath} L ${xAt(points.length - 1).toFixed(1)} ${(padding.top + innerH).toFixed(1)} L ${xAt(0).toFixed(1)} ${(padding.top + innerH).toFixed(1)} Z`
+      : "";
+
+  const gridLines = 4;
+  const gridVals = Array.from({ length: gridLines + 1 }, (_, i) => padded.min + (fullSpan * i) / gridLines);
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="equity-svg" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#35e3b0" stopOpacity="0.28" />
+          <stop offset="100%" stopColor="#35e3b0" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+
+      {gridVals.map((v, i) => (
+        <g key={i}>
+          <line
+            x1={padding.left} x2={width - padding.right}
+            y1={yAt(v)} y2={yAt(v)}
+            stroke="rgba(255,255,255,0.07)" strokeWidth="1"
+          />
+          <text x={padding.left - 8} y={yAt(v) + 4} textAnchor="end" className="equity-axis-label">
+            ${Math.round(v).toLocaleString("en-US")}
+          </text>
+        </g>
+      ))}
+
+      <line
+        x1={padding.left} x2={width - padding.right}
+        y1={yAt(goalLine)} y2={yAt(goalLine)}
+        stroke="#f4b740" strokeWidth="1.5" strokeDasharray="6 5"
+      />
+
+      {areaPath && <path d={areaPath} fill="url(#areaFill)" />}
+      {linePath && <path d={linePath} fill="none" stroke="#35e3b0" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" />}
+
+      {points.map((p, i) => (
+        <circle key={i} cx={xAt(i)} cy={yAt(p.value)} r={i === points.length - 1 ? 4 : 2.4} fill="#35e3b0" />
+      ))}
+    </svg>
+  );
+}
+
+/* --------------------------------- بخش‌ها --------------------------------- */
+
+function StatCard({ title, value, valueClass = "", note }) {
+  return (
+    <div className="card stat-card">
+      <div className="stat-card__title">{title}</div>
+      <div className={`stat-card__value ${valueClass}`}>{value}</div>
+      {note && <div className="stat-card__note">{note}</div>}
+    </div>
+  );
+}
+
+function Dashboard({ trades, balance, goalPct }) {
+  const stats = useMemo(() => {
+    const closed = trades.filter((t) => t.pnl !== "" && t.pnl !== null && !isNaN(Number(t.pnl)));
+    const wins = closed.filter((t) => Number(t.pnl) > 0);
+    const losses = closed.filter((t) => Number(t.pnl) < 0);
+    const winRate = closed.length ? (wins.length / closed.length) * 100 : 0;
+
+    const rrValues = trades
+      .filter((t) => t.risk && t.reward && Number(t.risk) > 0)
+      .map((t) => Number(t.reward) / Number(t.risk));
+    const avgRR = rrValues.length ? rrValues.reduce((a, b) => a + b, 0) / rrValues.length : null;
+
+    const best = closed.length ? closed.reduce((a, b) => (Number(a.pnl) > Number(b.pnl) ? a : b)) : null;
+
+    const totalPnl = closed.reduce((sum, t) => sum + Number(t.pnl), 0);
+
+    return { closed, wins, losses, winRate, avgRR, best, totalPnl };
+  }, [trades]);
+
+  const equityPoints = useMemo(() => {
+    const sorted = [...trades]
+      .filter((t) => t.pnl !== "" && t.pnl !== null && !isNaN(Number(t.pnl)))
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    let running = balance - sorted.reduce((s, t) => s + Number(t.pnl), 0);
+    const pts = [{ value: running }];
+    sorted.forEach((t) => {
+      running += Number(t.pnl);
+      pts.push({ value: running });
+    });
+    return pts;
+  }, [trades, balance]);
+
+  const currentBalance = balance;
+  const startBalance = equityPoints.length ? equityPoints[0].value : balance;
+  const growthPct = startBalance ? ((currentBalance - startBalance) / Math.abs(startBalance)) * 100 : 0;
+  const goalValue = startBalance * (1 + goalPct / 100);
+
+  return (
+    <div className="grid">
+      <div className="card metric-card">
+        <div className="metric-card__head">متوسط R:R</div>
+        <div className="metric-card__value">
+          {stats.avgRR ? `1 : ${stats.avgRR.toFixed(2)}` : <span className="dash">—</span>}
+        </div>
+        <div className="metric-card__sub">نسبت ریسک به ریوارد</div>
+      </div>
+
+      <div className="card metric-card">
+        <div className="metric-card__head">بهترین ترید</div>
+        <div className={`metric-card__value ${stats.best && Number(stats.best.pnl) >= 0 ? "pos" : "neg"}`}>
+          {stats.best ? fmtMoney(Number(stats.best.pnl)) : <span className="dash">—</span>}
+        </div>
+        <div className="metric-card__sub">{stats.best ? stats.best.pair : "—"}</div>
+      </div>
+
+      <div className="card ring-card">
+        <div className="ring-card__title">WIN RATE</div>
+        <RingStat percent={stats.winRate} label="Win Rate" />
+        <div className="ring-card__detail">
+          {stats.closed.length} تریدِ بسته‌شده · {stats.wins.length} برد · {stats.losses.length} باخت
+        </div>
+      </div>
+
+      <div className="card chart-card chart-card--wide">
+        <div className="chart-card__head">
+          <span className={`pill ${growthPct >= 0 ? "pill--pos" : "pill--neg"}`}>
+            {growthPct >= 0 ? "+" : ""}{growthPct.toFixed(1)}%
+          </span>
+          <span className="chart-card__title">نمودار رشد سرمایه</span>
+        </div>
+        <div className="chart-card__legend">
+          <span className="legend-item">
+            <span className="legend-swatch legend-swatch--solid" /> موجودی
+          </span>
+          <span className="legend-item">
+            <span className="legend-swatch legend-swatch--dashed" /> هدف {goalPct}% ({fmtMoney(goalValue - startBalance)})
+          </span>
+        </div>
+        <EquityChart points={equityPoints} goalLine={goalValue} startBalance={startBalance} />
+        <div className="chart-card__footer">
+          موجودی فعلی: <strong>{fmtMoney(currentBalance)}</strong>
+        </div>
+      </div>
+
+      <div className="card signature-card chart-card--wide">
+        <div className="chart-card__title">روند ۱۲ تریدِ اخیر</div>
+        <CandleSignature trades={trades} />
+        <div className="signature-card__legend">
+          <span><i className="dot dot--win" /> سود</span>
+          <span><i className="dot dot--loss" /> ضرر</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function isValidChartUrl(url) {
+  if (!url) return true;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function TradeForm({ onSubmit }) {
+  const [form, setForm] = useState({
+    pair: PAIRS[0],
+    direction: "buy",
+    entry: "",
+    exit: "",
+    risk: "",
+    reward: "",
+    pnl: "",
+    note: "",
+    chartUrl: "",
+  });
+  const [submitted, setSubmitted] = useState(false);
+  const [urlError, setUrlError] = useState("");
+
+  const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    try {
+      if (!form.pair) return;
+      if (!isValidChartUrl(form.chartUrl.trim())) {
+        setUrlError("لینک وارد شده معتبر نیست");
+        return;
+      }
+      setUrlError("");
+      onSubmit({
+        ...form,
+        entry: form.entry === "" ? null : Number(form.entry),
+        exit: form.exit === "" ? null : Number(form.exit),
+        risk: form.risk === "" ? null : Number(form.risk),
+        reward: form.reward === "" ? null : Number(form.reward),
+        pnl: form.pnl === "" ? "" : Number(form.pnl),
+        chartUrl: form.chartUrl.trim(),
+      });
+      setSubmitted(true);
+      setForm({ pair: PAIRS[0], direction: "buy", entry: "", exit: "", risk: "", reward: "", pnl: "", note: "", chartUrl: "" });
+      setTimeout(() => setSubmitted(false), 2200);
+    } catch (err) {
+      alert("ثبت ترید ناموفق بود: " + (err && err.message ? err.message : "خطای نامشخص"));
+    }
+  };
+
+  return (
+    <form className="card form-card" onSubmit={handleSubmit}>
+      <h2 className="form-card__title">ثبت تریدِ جدید</h2>
+
+      <div className="field-row">
+        <label className="field">
+          <span>جفت‌ارز</span>
+          <select value={form.pair} onChange={update("pair")}>
+            {PAIRS.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field">
+          <span>جهت</span>
+          <div className="seg">
+            <button
+              type="button"
+              className={`seg__btn ${form.direction === "buy" ? "seg__btn--active seg__btn--buy" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, direction: "buy" }))}
+            >
+              <Icon.up className="seg__icon" /> خرید
+            </button>
+            <button
+              type="button"
+              className={`seg__btn ${form.direction === "sell" ? "seg__btn--active seg__btn--sell" : ""}`}
+              onClick={() => setForm((f) => ({ ...f, direction: "sell" }))}
+            >
+              <Icon.down className="seg__icon" /> فروش
+            </button>
+          </div>
+        </label>
+      </div>
+
+      <div className="field-row">
+        <label className="field">
+          <span>قیمت ورود</span>
+          <input type="number" step="any" placeholder="مثلاً 1.0850" value={form.entry} onChange={update("entry")} />
+        </label>
+        <label className="field">
+          <span>قیمت خروج</span>
+          <input type="number" step="any" placeholder="مثلاً 1.0900" value={form.exit} onChange={update("exit")} />
+        </label>
+      </div>
+
+      <div className="field-row">
+        <label className="field">
+          <span>ریسک (واحد)</span>
+          <input type="number" step="any" placeholder="مثلاً 1" value={form.risk} onChange={update("risk")} />
+        </label>
+        <label className="field">
+          <span>ریوارد (واحد)</span>
+          <input type="number" step="any" placeholder="مثلاً 2.5" value={form.reward} onChange={update("reward")} />
+        </label>
+      </div>
+
+      <label className="field">
+        <span>سود / ضرر (دلار)</span>
+        <input type="number" step="any" placeholder="مثبت برای سود، منفی برای ضرر" value={form.pnl} onChange={update("pnl")} />
+      </label>
+
+      <label className="field">
+        <span>یادداشت ترید</span>
+        <textarea rows={3} placeholder="چرا وارد شدی؟ ستاپ چی بود؟ چه چیزی یاد گرفتی؟" value={form.note} onChange={update("note")} />
+      </label>
+
+      <label className="field">
+        <span>لینک چارت (TradingView)</span>
+        <input
+          type="url"
+          placeholder="https://www.tradingview.com/x/..."
+          value={form.chartUrl}
+          onChange={(e) => { update("chartUrl")(e); setUrlError(""); }}
+        />
+        {urlError && <span className="field__error">{urlError}</span>}
+        {form.chartUrl && isValidChartUrl(form.chartUrl.trim()) && (
+          <a href={form.chartUrl.trim()} target="_blank" rel="noopener noreferrer" className="chart-preview-link">
+            مشاهدهٔ پیش‌نمایش چارت ↗
+          </a>
+        )}
+      </label>
+
+      <button type="submit" className="btn btn--primary">
+        <Icon.plus className="btn__icon" /> ثبت ترید
+      </button>
+
+      {submitted && <div className="toast">تریدت با موفقیت ثبت و ذخیره شد ✓</div>}
+    </form>
+  );
+}
+
+function TradeList({ trades, onDelete }) {
+  if (!trades.length) {
+    return (
+      <div className="card empty-state">
+        <Icon.list className="empty-state__icon" />
+        <p>هنوز هیچ تریدی ثبت نشده. از تب «ثبت ترید» اولین تریدت رو وارد کن.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="trade-list">
+      {trades.map((t) => {
+        const pnl = t.pnl === "" || t.pnl === null ? null : Number(t.pnl);
+        const win = pnl !== null && pnl >= 0;
+        return (
+          <div key={t.id} className="card trade-row">
+            <div className="trade-row__main">
+              <div className={`trade-row__dir ${t.direction === "buy" ? "trade-row__dir--buy" : "trade-row__dir--sell"}`}>
+                {t.direction === "buy" ? <Icon.up className="trade-row__dir-icon" /> : <Icon.down className="trade-row__dir-icon" />}
+              </div>
+              <div className="trade-row__info">
+                <div className="trade-row__pair">{t.pair}</div>
+                <div className="trade-row__meta">
+                  {t.entry != null && t.exit != null ? `${t.entry} → ${t.exit} · ` : ""}{fmtDate(t.createdAt)}
+                </div>
+              </div>
+            </div>
+            <div className="trade-row__right">
+              <div className={`trade-row__pnl ${pnl === null ? "" : win ? "pos" : "neg"}`}>
+                {pnl === null ? "—" : fmtMoney(pnl)}
+              </div>
+              {t.risk && t.reward && (
+                <div className="trade-row__rr">R:R 1:{(Number(t.reward) / Number(t.risk)).toFixed(2)}</div>
+              )}
+            </div>
+            <button className="icon-btn" onClick={() => onDelete(t.id)} aria-label="حذف ترید">
+              <Icon.trash className="icon-btn__svg" />
+            </button>
+            {(t.note || t.chartUrl) && (
+              <div className="trade-row__extra">
+                {t.note && <div className="trade-row__note">{t.note}</div>}
+                {t.chartUrl && (
+                  <a
+                    href={t.chartUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="trade-row__chart-link"
+                  >
+                    <Icon.chart className="trade-row__chart-icon" /> مشاهدهٔ چارت در TradingView
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Analysis({ trades }) {
+  const insights = useMemo(() => {
+    const closed = trades.filter((t) => t.pnl !== "" && t.pnl !== null && !isNaN(Number(t.pnl)));
+    if (!closed.length) return null;
+
+    const byPair = {};
+    closed.forEach((t) => {
+      byPair[t.pair] = byPair[t.pair] || { wins: 0, losses: 0, pnl: 0 };
+      byPair[t.pair].pnl += Number(t.pnl);
+      if (Number(t.pnl) >= 0) byPair[t.pair].wins += 1;
+      else byPair[t.pair].losses += 1;
+    });
+
+    const pairsSorted = Object.entries(byPair).sort((a, b) => b[1].pnl - a[1].pnl);
+    const bestPair = pairsSorted[0];
+    const worstPair = pairsSorted[pairsSorted.length - 1];
+
+    const buys = closed.filter((t) => t.direction === "buy");
+    const sells = closed.filter((t) => t.direction === "sell");
+    const buyWinRate = buys.length ? (buys.filter((t) => Number(t.pnl) >= 0).length / buys.length) * 100 : null;
+    const sellWinRate = sells.length ? (sells.filter((t) => Number(t.pnl) >= 0).length / sells.length) * 100 : null;
+
+    return { bestPair, worstPair, buyWinRate, sellWinRate, count: closed.length };
+  }, [trades]);
+
+  return (
+    <div className="card analysis-card">
+      <div className="analysis-card__head">
+        <Icon.brain className="analysis-card__icon" />
+        <h2>تحلیل AI</h2>
+      </div>
+
+      {!insights ? (
+        <p className="analysis-card__empty">
+          برای دریافت تحلیل، حداقل چند تریدِ بسته‌شده (با سود/ضرر مشخص) ثبت کن.
+        </p>
+      ) : (
+        <div className="analysis-card__body">
+          <p>
+            از مجموع <strong>{insights.count}</strong> تریدِ بسته‌شده، جفت‌ارزِ{" "}
+            <strong className="pos">{insights.bestPair[0]}</strong> بیشترین سود را داشته
+            ({fmtMoney(insights.bestPair[1].pnl)})
+            {insights.worstPair && insights.worstPair[0] !== insights.bestPair[0] && (
+              <> و <strong className="neg">{insights.worstPair[0]}</strong> ضعیف‌ترین عملکرد را داشته ({fmtMoney(insights.worstPair[1].pnl)})</>
+            )}.
+          </p>
+          {insights.buyWinRate !== null && insights.sellWinRate !== null && (
+            <p>
+              نرخ برد در پوزیشن‌های خرید <strong>{insights.buyWinRate.toFixed(0)}%</strong> و در پوزیشن‌های فروش{" "}
+              <strong>{insights.sellWinRate.toFixed(0)}%</strong> بوده است.
+              {insights.buyWinRate > insights.sellWinRate + 10
+                ? " به نظر می‌رسد ستاپ‌های خریدت قوی‌تر عمل می‌کنند."
+                : insights.sellWinRate > insights.buyWinRate + 10
+                ? " به نظر می‌رسد ستاپ‌های فروشت قوی‌تر عمل می‌کنند."
+                : ""}
+            </p>
+          )}
+          <p className="analysis-card__note">
+            این تحلیل بر اساس داده‌های ثبت‌شده‌ی توست و صرفاً جهت بازبینی عملکرد است، نه توصیه‌ی معاملاتی.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsBar({ balance, setBalance, goalPct, setGoalPct }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="settings">
+      <button className="settings__toggle" onClick={() => setOpen((o) => !o)}>
+        تنظیمات
+      </button>
+      {open && (
+        <div className="settings__panel card">
+          <label className="field">
+            <span>موجودی اولیه حساب (دلار)</span>
+            <input
+              type="number"
+              step="any"
+              value={balance}
+              onChange={(e) => setBalance(Number(e.target.value) || 0)}
+            />
+          </label>
+          <label className="field">
+            <span>هدف رشد ماهانه (٪)</span>
+            <input
+              type="number"
+              step="any"
+              value={goalPct}
+              onChange={(e) => setGoalPct(Number(e.target.value) || 0)}
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------------- اصلی --------------------------------- */
+
+const TABS = [
+  { key: "dashboard", label: "داشبورد", icon: Icon.dashboard },
+  { key: "log", label: "ثبت ترید", icon: Icon.plus },
+  { key: "list", label: "تریدها", icon: Icon.list },
+  { key: "analysis", label: "تحلیل AI", icon: Icon.brain },
+];
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, message: error && error.message ? error.message : "خطای نامشخص" };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          background: "#0a0e14", color: "#e8edf6", minHeight: "100vh",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "Vazirmatn, sans-serif", direction: "rtl", padding: 24, textAlign: "center"
+        }}>
+          <div>
+            <p style={{ fontSize: 16, marginBottom: 8 }}>یه خطا پیش اومد و صفحه متوقف شد.</p>
+            <p style={{ fontSize: 13, color: "#8a96ab" }}>{this.state.message}</p>
+            <button
+              onClick={() => location.reload()}
+              style={{
+                marginTop: 16, background: "#35e3b0", color: "#04241b", border: "none",
+                borderRadius: 10, padding: "10px 18px", fontWeight: 700, cursor: "pointer"
+              }}
+            >
+              تلاش دوباره
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function App() {
+  const { trades, loaded: tradesLoaded, error, addTrade, deleteTrade } = useTrades();
+  const { balance, setBalance, goalPct, setGoalPct, loaded: settingsLoaded } = useSettings();
+  const [tab, setTab] = useState("dashboard");
+  const [storageOk, setStorageOk] = useState(true);
+
+  useEffect(() => {
+    setStorageOk(isStorageAvailable());
+  }, []);
+
+  const ready = tradesLoaded && settingsLoaded;
+
+  return (
+    <div className="app" dir="rtl">
+      <style>{css}</style>
+
+      <header className="header">
+        <div className="header__brand">
+          <span className="header__dot" />
+          <span className="header__title">ژورنال فارکس</span>
+        </div>
+        <nav className="tabs">
+          {TABS.map((t) => {
+            const ActiveIcon = t.icon;
+            return (
+              <button
+                key={t.key}
+                className={`tabs__btn ${tab === t.key ? "tabs__btn--active" : ""}`}
+                onClick={() => setTab(t.key)}
+              >
+                <ActiveIcon className="tabs__icon" />
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
+        <SettingsBar balance={balance} setBalance={setBalance} goalPct={goalPct} setGoalPct={setGoalPct} />
+      </header>
+
+      <main className="main">
+        {!storageOk && (
+          <div className="error-banner">
+            ذخیره‌سازی در این مرورگر مسدود است (معمولاً به‌خاطر باز کردن فایل به‌صورت مستقیم). این فایل رو روی یه هاست واقعی مثل Netlify آپلود کن تا ثبت ترید درست کار کنه.
+          </div>
+        )}
+        {!ready ? (
+          <div className="loading">در حال بارگذاری اطلاعات…</div>
+        ) : (
+          <>
+            {error && <div className="error-banner">{error}</div>}
+            {tab === "dashboard" && <Dashboard trades={trades} balance={balance} goalPct={goalPct} />}
+            {tab === "log" && <TradeForm onSubmit={addTrade} />}
+            {tab === "list" && <TradeList trades={trades} onDelete={deleteTrade} />}
+            {tab === "analysis" && <Analysis trades={trades} />}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+/* ---------------------------------- CSS ---------------------------------- */
+
+const css = `
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap');
+
+:root {
+  --bg: #0a0e14;
+  --bg-soft: #0e1420;
+  --panel: #121a28;
+  --panel-border: rgba(140, 170, 210, 0.12);
+  --ink: #e8edf6;
+  --ink-dim: #8a96ab;
+  --accent: #35e3b0;
+  --accent-dim: rgba(53, 227, 176, 0.14);
+  --warn: #f4b740;
+  --buy: #35e3b0;
+  --sell: #ff6b81;
+  --radius: 16px;
+}
+
+* { box-sizing: border-box; }
+
+.app {
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 480px at 100% -10%, rgba(53,227,176,0.07), transparent 60%),
+    radial-gradient(700px 400px at -10% 30%, rgba(244,183,64,0.05), transparent 60%),
+    var(--bg);
+  color: var(--ink);
+  font-family: 'Vazirmatn', sans-serif;
+  padding: 18px 16px 48px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.header__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+.header__dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-dim);
+}
+.header__title {
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: -0.2px;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+.tabs__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 4px;
+  border-radius: 11px;
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tabs__icon { width: 18px; height: 18px; }
+.tabs__btn--active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.settings { display: flex; justify-content: center; }
+.settings__toggle {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--ink-dim);
+  border-radius: 10px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings__panel {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 320px;
+  margin-inline: auto;
+}
+
+.main { max-width: 640px; margin: 0 auto; }
+
+.loading { text-align: center; color: var(--ink-dim); padding: 60px 0; }
+.error-banner {
+  background: rgba(255,107,129,0.12);
+  border: 1px solid rgba(255,107,129,0.3);
+  color: var(--sell);
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.chart-card--wide { grid-column: 1 / -1; }
+
+.metric-card__head {
+  font-size: 13px;
+  color: var(--ink-dim);
+  margin-bottom: 14px;
+}
+.metric-card__value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.metric-card__sub { font-size: 12px; color: var(--ink-dim); }
+.pos { color: var(--accent); }
+.neg { color: var(--sell); }
+.dash { color: var(--ink-dim); }
+
+.ring-card { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ring-card__title {
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: var(--ink-dim);
+  font-weight: 700;
+}
+.ring-card__detail { font-size: 12px; color: var(--ink-dim); }
+
+.ring { display: flex; flex-direction: column; align-items: center; }
+.ring__track {
+  width: 150px; height: 150px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+}
+.ring__track::before {
+  content: '';
+  position: absolute;
+  width: 118px; height: 118px;
+  border-radius: 50%;
+  background: var(--panel);
+}
+.ring__dot {
+  position: absolute;
+  top: 0; left: 50%;
+  width: 1px; height: 75px;
+  transform-origin: bottom center;
+}
+.ring__dot span {
+  position: absolute;
+  top: -5px; left: -5px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+.ring__center { position: relative; z-index: 2; text-align: center; }
+.ring__value { font-family: 'JetBrains Mono', monospace; font-size: 26px; font-weight: 700; }
+.ring__label { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
+
+.chart-card__head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.chart-card__title { font-weight: 700; font-size: 14px; }
+.pill {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 20px;
+}
+.pill--pos { background: var(--accent-dim); color: var(--accent); }
+.pill--neg { background: rgba(255,107,129,0.14); color: var(--sell); }
+
+.chart-card__legend { display: flex; gap: 16px; margin: 10px 0 6px; font-size: 12px; color: var(--ink-dim); }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-swatch { width: 18px; height: 9px; border-radius: 3px; display: inline-block; }
+.legend-swatch--solid { background: var(--accent); }
+.legend-swatch--dashed {
+  background: repeating-linear-gradient(90deg, var(--warn) 0 6px, transparent 6px 10px);
+  height: 2px; margin-top: 4px;
+}
+
+.equity-svg { width: 100%; height: 200px; display: block; }
+.equity-axis-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  fill: var(--ink-dim);
+}
+.chart-card__footer { margin-top: 8px; font-size: 13px; color: var(--ink-dim); }
+.chart-card__footer strong { color: var(--ink); font-family: 'JetBrains Mono', monospace; }
+
+.signature-card { display: flex; flex-direction: column; gap: 12px; }
+.candle-sig {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 90px;
+  padding: 0 4px;
+}
+.candle-sig__bar {
+  flex: 1;
+  border-radius: 4px 4px 2px 2px;
+  min-height: 6%;
+}
+.candle-sig__bar--win { background: linear-gradient(180deg, var(--accent), rgba(53,227,176,0.35)); }
+.candle-sig__bar--loss { background: linear-gradient(180deg, var(--sell), rgba(255,107,129,0.3)); }
+.candle-sig__bar--empty { background: rgba(255,255,255,0.05); height: 8%; }
+.signature-card__legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-dim); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-inline-end: 5px; }
+.dot--win { background: var(--accent); }
+.dot--loss { background: var(--sell); }
+
+/* فرم */
+.form-card { display: flex; flex-direction: column; gap: 14px; }
+.form-card__title { font-size: 16px; font-weight: 700; margin: 0; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-dim); }
+.field input, .field select, .field textarea {
+  background: var(--bg-soft);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.field input:focus, .field select:focus, .field textarea:focus {
+  border-color: var(--accent);
+}
+.field textarea { resize: vertical; }
+.field__error { color: var(--sell); font-size: 11px; }
+.chart-preview-link {
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+  width: fit-content;
+}
+.chart-preview-link:hover { text-decoration: underline; }
+
+.seg { display: flex; gap: 6px; background: var(--bg-soft); border-radius: 10px; padding: 4px; border: 1px solid var(--panel-border); }
+.seg__btn {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 0;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg__icon { width: 14px; height: 14px; }
+.seg__btn--active.seg__btn--buy { background: rgba(53,227,176,0.16); color: var(--accent); }
+.seg__btn--active.seg__btn--sell { background: rgba(255,107,129,0.16); color: var(--sell); }
+
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: none;
+  border-radius: 12px;
+  padding: 13px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.btn--primary { background: var(--accent); color: #04241b; }
+.btn__icon { width: 16px; height: 16px; }
+
+.toast {
+  text-align: center;
+  font-size: 13px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 10px;
+  padding: 9px;
+}
+
+/* لیست تریدها */
+.trade-list { display: flex; flex-direction: column; gap: 10px; }
+.trade-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  padding: 14px 16px;
+}
+.trade-row__main { display: flex; align-items: center; gap: 10px; grid-column: 1 / 3; }
+.trade-row__dir {
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.trade-row__dir--buy { background: rgba(53,227,176,0.14); color: var(--accent); }
+.trade-row__dir--sell { background: rgba(255,107,129,0.14); color: var(--sell); }
+.trade-row__dir-icon { width: 17px; height: 17px; }
+.trade-row__pair { font-weight: 700; font-size: 14px; }
+.trade-row__meta { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
+.trade-row__right { text-align: left; }
+.trade-row__pnl { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px; }
+.trade-row__rr { font-size: 10px; color: var(--ink-dim); margin-top: 2px; }
+.icon-btn { background: transparent; border: none; color: var(--ink-dim); cursor: pointer; padding: 4px; }
+.icon-btn__svg { width: 16px; height: 16px; }
+.icon-btn:hover { color: var(--sell); }
+.trade-row__note {
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.trade-row__extra {
+  grid-column: 1 / -1;
+  border-top: 1px dashed var(--panel-border);
+  padding-top: 10px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trade-row__chart-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  width: fit-content;
+}
+.trade-row__chart-link:hover { text-decoration: underline; }
+.trade-row__chart-icon { width: 14px; height: 14px; }
+
+.empty-state { text-align: center; color: var(--ink-dim); padding: 40px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.empty-state__icon { width: 28px; height: 28px; opacity: 0.5; }
+
+/* تحلیل */
+.analysis-card__head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.analysis-card__icon { width: 20px; height: 20px; color: var(--accent); }
+.analysis-card__head h2 { font-size: 16px; margin: 0; }
+.analysis-card__body { display: flex; flex-direction: column; gap: 12px; font-size: 14px; line-height: 1.8; }
+.analysis-card__empty { font-size: 13px; color: var(--ink-dim); }
+.analysis-card__note { font-size: 12px; color: var(--ink-dim); border-top: 1px dashed var(--panel-border); padding-top: 10px; }
+
+@media (max-width: 380px) {
+  .grid { grid-template-columns: 1fr; }
+  .field-row { grid-template-columns: 1fr; }
+}
+`;
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<ErrorBoundary><App /></ErrorBoundary>);
+</script>
+</body>
+</html>
